@@ -552,5 +552,20 @@ std::string PjRtArray::DebugString() const {
       sharding_->DebugString());
 }
 
+StatusOr<std::unique_ptr<PjRtLayout>> PjRtArray::layout() const {
+  CHECK(!pjrt_buffers_.empty());
+  std::unique_ptr<PjRtLayout> layout = pjrt_buffers_[0]->layout();
+#ifndef NDEBUG
+  for (int i = 1; i < pjrt_buffers_.size(); ++i) {
+    std::unique_ptr<PjRtLayout> layout_i = pjrt_buffers_[i]->layout();
+    DCHECK_EQ(layout, layout_i)
+        << "PjRtArray has mismatched layouts across shards! "
+        << "shard 0: " << layout->ToString() << ", shard " << i << ": "
+        << layout_i->ToString();
+  }
+#endif
+  return layout;
+}
+
 }  // namespace ifrt
 }  // namespace xla

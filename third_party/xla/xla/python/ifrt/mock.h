@@ -64,6 +64,8 @@ class MockArray final : public llvm::RTTIExtends<MockArray, Array> {
   MOCK_METHOD(const Sharding&, sharding, (), (const, final));
   MOCK_METHOD(std::shared_ptr<const Sharding>, shared_ptr_sharding, (),
               (const, final));
+  MOCK_METHOD(StatusOr<std::unique_ptr<PjRtLayout>>, layout, (),
+              (const, final));
   MOCK_METHOD(StatusOr<std::vector<tsl::RCReference<Array>>>,
               DisassembleIntoSingleDeviceArrays, (ArrayCopySemantics semantics),
               (final));

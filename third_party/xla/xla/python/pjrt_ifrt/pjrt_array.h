@@ -146,6 +146,8 @@ class PjRtArray final
     return sharding_;
   }
 
+  StatusOr<std::unique_ptr<PjRtLayout>> layout() const override;
+
   StatusOr<std::vector<tsl::RCReference<Array>>>
   DisassembleIntoSingleDeviceArrays(ArrayCopySemantics semantics) override;
 
