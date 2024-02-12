@@ -130,6 +130,18 @@ class BackendAsyncKernelInterface {
                                      TfLiteOpaqueNode* node, int tensor_index,
                                      const TfLiteAttributeMap* attrs) = 0;
 
+  // Set buffer's attributes. Backend will check if the buffer has been
+  // registered. And return TfLiteOk if the attribute for that buffer could be
+  // set in the map.
+  virtual TfLiteStatus SetBufferAttributes(const TfLiteBackendBuffer* buffer,
+                                           const TfLiteAttributeMap* attrs) = 0;
+
+  // Get buffer's attributes. Backend will check if the buffer has been
+  // registered. And return TfLiteOk if the attribute for that buffer could be
+  // found in the map.
+  virtual TfLiteStatus GetBufferAttributes(const TfLiteBackendBuffer* buffer,
+                                           TfLiteAttributeMap* attrs) = 0;
+
   // Prepares the kernel using the information from Set[In|Out]putAttributes
   // call above.
   virtual TfLiteStatus Prepare(TfLiteOpaqueContext* context,
