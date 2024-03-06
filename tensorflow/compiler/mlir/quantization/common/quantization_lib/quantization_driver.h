@@ -40,7 +40,7 @@ limitations under the License.
 namespace mlir {
 namespace quant {
 
-static bool HasQuantParams(QuantParams p) {
+inline static bool IsQuantizedType(QuantParams p) {
   return p == quant::QuantizedType();
 }
 
@@ -52,8 +52,6 @@ struct QuantState {
   // initialized. This flag will be set to true if the quantization parameters
   // are from the quantization-aware training.
   const bool immutable;
-
-  bool IsEmpty() { return HasQuantParams(params); }
 };
 
 // The state for rescaling the propagated quantization parameters. This can be
@@ -132,9 +130,18 @@ class QuantizationDriver {
 
   llvm::SmallVector<BlockArgument, 4> GetArgs() { return args_; }
 
+  llvm::DenseMap<std::pair<mlir::Operation*, int>, int> GetResultStates() {
+    return result_states_;
+  }
+
   // Returns the state of the block argument.
   QuantState& GetArgQuantState(BlockArgument arg) {
     return states_[arg_states_[arg]];
+  }
+
+  // Returns the state of the index-th result of the op.
+  QuantState& GetResultQuantState(Operation* op, int index) {
+    return states_[result_states_[{op, index}]];
   }
 
  private:
@@ -251,11 +258,6 @@ class QuantizationDriver {
   // Returns the state of the index-th operand of the op.
   QuantState& GetOperandQuantState(Operation* op, int index) {
     return states_[operand_states_[{op, index}]];
-  }
-
-  // Returns the state of the index-th result of the op.
-  QuantState& GetResultQuantState(Operation* op, int index) {
-    return states_[result_states_[{op, index}]];
   }
 
   // Returns the states of the index-th operand of the op.

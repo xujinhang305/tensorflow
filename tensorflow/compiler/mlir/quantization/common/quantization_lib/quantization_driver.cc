@@ -27,6 +27,7 @@ limitations under the License.
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"  // from @llvm-project
 #include "mlir/Dialect/Func/IR/FuncOps.h"  // from @llvm-project
 #include "mlir/Dialect/Quant/QuantTypes.h"  // from @llvm-project
@@ -73,7 +74,7 @@ void InitializeStateForValue(Operation* op, const int index, const Value value,
   }
   const QuantParams params =
       quant::QuantizedType::getQuantizedElementType(value.getType());
-  const bool immutable = !HasQuantParams(params);
+  const bool immutable = !IsQuantizedType(params);
   const int next_state_index = states->size();
   states->push_back({params, immutable});
   if (as_result)
@@ -94,7 +95,7 @@ void QuantizationDriver::InitializeArgState(const BlockArgument arg,
   }
   const QuantParams params =
       quant::QuantizedType::getQuantizedElementType(arg_value.getType());
-  const bool immutable = !HasQuantParams(params);
+  const bool immutable = !IsQuantizedType(params);
   const int next_state_index = states_.size();
   states_.push_back({params, immutable});
   arg_states_[arg] = next_state_index;
@@ -126,7 +127,7 @@ std::unique_ptr<OpQuantScaleSpec> QuantizationDriver::GetQuantScaleSpec(
 
 bool QuantizationDriver::IsQuantized(Operation* op) {
   for (int i = 0; i < op->getNumResults(); ++i) {
-    if (GetResultQuantState(op, i).IsEmpty()) return false;
+    if (IsQuantizedType(GetResultQuantState(op, i).params)) return false;
   }
   return true;
 }
@@ -174,7 +175,7 @@ bool QuantizationDriver::SetResultParams(Operation* op, const int res_index,
   if (state.params == params) {
     return false;
   }
-  if (!state.IsEmpty()) {
+  if (!IsQuantizedType(state.params)) {
     auto& rescales = GetResultRequantizeStates(op, res_index);
     RequantizeState& rescale = rescales.emplace_back();
     rescale.pos = RequantizeState::ON_INPUT;
@@ -190,7 +191,7 @@ QuantParams QuantizationDriver::GetBiasParams(
     Operation* op, const int bias_index, const std::vector<int>& non_biases,
     const AccumulatorScaleFunc func) {
   QuantState& bias_state = GetOperandQuantState(op, bias_index);
-  if (!bias_state.IsEmpty()) {
+  if (!IsQuantizedType(bias_state.params)) {
     return bias_state.params;
   }
   std::vector<QuantParams> op_types;
@@ -226,7 +227,7 @@ bool QuantizationDriver::SetOperandParams(Operation* op, const int index,
     return false;
   }
 
-  if (!state.IsEmpty() && !override) {
+  if (!IsQuantizedType(state.params) && !override) {
     auto& rescales = GetOperandRequantizeStates(op, index);
     for (RequantizeState& rescale : rescales) {
       if (rescale.params == params) {
@@ -408,7 +409,7 @@ QuantParams QuantizationDriver::GetQuantParamsForSameScaleConstraint(
     auto& state = GetOperandQuantState(op, i);
     if (state.immutable) {
       immutable_states.push_back(&state);
-    } else if (!state.IsEmpty()) {
+    } else if (!IsQuantizedType(state.params)) {
       mutable_states.push_back(&state);
     }
   }
@@ -425,7 +426,7 @@ QuantParams QuantizationDriver::GetQuantParamsForSameScaleConstraint(
     auto& state = GetResultQuantState(op, i);
     if (state.immutable) {
       immutable_states.push_back(&state);
-    } else if (!state.IsEmpty()) {
+    } else if (!IsQuantizedType(state.params)) {
       mutable_states.push_back(&state);
     }
   }
@@ -510,7 +511,8 @@ void QuantizationDriver::PreprocessConstantOps() {
         // so the quantization parameter are propagated from or determined by
         // other values. Duplicate this constant in case it is shared by
         // different users.
-        if (uses.size() > 1) {
+        // Duplicate constant from the second use.
+        if (uses.size() > 1 && indexed_use.index() > 0) {
           auto new_cst =
               builder_.create<arith::ConstantOp>(cst.getLoc(), cst.getValue());
           user->setOperand(operand_num, new_cst);
@@ -839,7 +841,8 @@ void QuantizationDriver::Finalize() {
   for (auto arg : args_) {
     auto& state = GetArgQuantState(arg);
     auto& requantizes = GetArgRequantizeStates(arg);
-    if (state.IsEmpty() || (state.immutable && requantizes.empty())) {
+    if (IsQuantizedType(state.params) ||
+        (state.immutable && requantizes.empty())) {
       continue;
     }
 
@@ -857,7 +860,8 @@ void QuantizationDriver::Finalize() {
     const int res_index = it.first.second;
     auto& state = GetResultQuantState(op, res_index);
     auto& requantizes = GetResultRequantizeStates(op, res_index);
-    if (state.IsEmpty() || (state.immutable && requantizes.empty())) {
+    if (state.params == quant::QuantizedType() ||
+        (state.immutable && requantizes.empty())) {
       continue;
     }
 
