@@ -214,24 +214,32 @@ StaticRangePtqComponent::StaticRangePtqComponent(
     absl::Nonnull<MLIRContext*> ctx,
     absl::Nonnull<const PyFunctionLibrary*> py_function_library,
     const absl::string_view src_saved_model_path,
+    QuantizationConfig quantization_config,
     std::vector<std::string> signature_keys,
     std::unordered_set<std::string> tags,
     absl::flat_hash_map<std::string, SignatureDef> signature_def_map,
     absl::flat_hash_map<FunctionName, FunctionAlias> function_aliases)
     : ctx_(ctx) {
   // Initialize the three sub-components.
-  sub_components_[0] = std::make_unique<PreCalibrationComponent>(ctx_);
-  sub_components_[1] = std::make_unique<CalibrationComponent>(
-      ctx_, py_function_library, src_saved_model_path,
-      std::move(function_aliases), std::move(tags),
-      std::move(signature_def_map), std::move(signature_keys));
-  sub_components_[2] = std::make_unique<PostCalibrationComponent>(ctx_);
+  sub_components_.push_back(std::make_unique<PreCalibrationComponent>(ctx_));
+
+  if (!quantization_config.has_weight_only_preset()) {
+    sub_components_.push_back(std::make_unique<CalibrationComponent>(
+        ctx_, py_function_library, src_saved_model_path,
+        std::move(function_aliases), std::move(tags),
+        std::move(signature_def_map), std::move(signature_keys)));
+  }
+
+  sub_components_.push_back(std::make_unique<PostCalibrationComponent>(ctx_));
 }
 
 absl::StatusOr<ModuleOp> StaticRangePtqComponent::Run(
     ModuleOp module_op, const QuantizationConfig& config) {
-  // Runs sub-components in sequence: PreCalibrationComponent ->
+  // Runs sub-components in sequence:
+  // For static range quantization: PreCalibrationComponent ->
   // CalibrationComponent -> PostCalibrationComponents.
+  // For weight-only quantization: PreCalibrationComponent ->
+  // PostCalibrationComponents.
   for (std::unique_ptr<Component>& sub_component : sub_components_) {
     TF_ASSIGN_OR_RETURN(module_op, sub_component->Run(module_op, config));
   }
@@ -270,8 +278,9 @@ absl::Status QuantizeStaticRangePtq(
                        quantization_config, *function_aliases, *ctx));
 
   StaticRangePtqComponent static_range_ptq_component(
-      ctx.get(), &py_function_library, src_saved_model_path, signature_keys,
-      tags, signature_def_map, *function_aliases);
+      ctx.get(), &py_function_library, src_saved_model_path,
+      quantization_config, signature_keys, tags, signature_def_map,
+      *function_aliases);
   TF_ASSIGN_OR_RETURN(module_op, static_range_ptq_component.Run(
                                      module_op, quantization_config));
 

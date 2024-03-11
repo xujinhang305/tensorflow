@@ -109,8 +109,8 @@ absl::StatusOr<mlir::ModuleOp> RunQuantization(
 
   StaticRangePtqComponent static_range_ptq_component(
       module_op.getContext(), quantization_py_function_lib, saved_model_dir,
-      /*signature_keys=*/exported_names, saved_model_tags, signature_def_map,
-      GetFunctionAliases(*saved_model_bundle));
+      quantization_config, /*signature_keys=*/exported_names, saved_model_tags,
+      signature_def_map, GetFunctionAliases(*saved_model_bundle));
   const absl::StatusOr<mlir::ModuleOp> quantized_module_op =
       static_range_ptq_component.Run(module_op, quantization_config);
   if (!quantized_module_op.ok()) {
