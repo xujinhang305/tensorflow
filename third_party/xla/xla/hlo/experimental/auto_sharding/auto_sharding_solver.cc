@@ -1040,9 +1040,6 @@ Status ValidateRequest(const AutoShardingSolverRequest& request) {
     const int num_u_strategies = request.computation_costs(u).costs_size();
     const int num_v_strategies = request.computation_costs(v).costs_size();
     CHECK_EQ(num_strategies, num_u_strategies * num_v_strategies);
-    for (EdgeStrategyIdx strategy = 0; strategy < num_strategies; ++strategy) {
-      TF_RET_CHECK(request.resharding_costs(e).costs(strategy) >= 0.0);
-    }
   }
   return OkStatus();
 }
