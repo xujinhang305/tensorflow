@@ -1999,6 +1999,7 @@ def tf_kernel_library(
     if not textual_hdrs:
         textual_hdrs = []
     copts = copts + tf_copts(is_external = is_external) + if_cuda(["-DNV_CUDNN_DISABLE_EXCEPTION"])
+    deps = deps + ["@local_xla//xla:bazel_issue_21519"]
 
     # Override EIGEN_STRONG_INLINE to inline when
     # --define=override_eigen_strong_inline=true to avoid long compiling time.
