@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_EXPERIMENTAL_SHLO_OPS_TEST_UTIL_H_
 #define TENSORFLOW_LITE_EXPERIMENTAL_SHLO_OPS_TEST_UTIL_H_
 
+#include <cstdint>
 #include <random>
 #include <string>
 #include <type_traits>
@@ -33,6 +34,12 @@ using Vector = absl::InlinedVector<T, 1>;
 
 template <DataType storage_type, typename = void>
 struct Distribution;
+
+template <>
+struct Distribution<DataType::kI1, void>
+    : std::uniform_int_distribution<int32_t> {
+  using std::uniform_int_distribution<int32_t>::uniform_int_distribution;
+};
 
 template <DataType storage_type>
 struct Distribution<storage_type, std::enable_if_t<IsInteger(storage_type)>>
@@ -54,7 +61,13 @@ Vector<typename Config::Type> RandomBuffer(
   Vector<typename Config::Type> vec(shape.NumElements());
   std::random_device rd;
   Distribution<storage_type> dist(min, max);
-  absl::c_generate(vec, [&] { return dist(rd); });
+  absl::c_generate(vec, [&] {
+    if constexpr (storage_type == DataType::kI1) {
+      return dist(rd) >= 0;
+    } else {
+      return dist(rd);
+    }
+  });
   return vec;
 }
 
@@ -74,8 +87,17 @@ Vector<typename Config::Type> IotaBuffer(
   return vec;
 }
 
-template <DataType storage_type, DataType expressed_type = DataType::kF32>
-struct TestParam {
+template <DataType... Types>
+struct TestParam;
+
+template <DataType storage_type>
+struct TestParam<storage_type> {
+  static constexpr DataType kStorage = storage_type;
+  using StorageT = StorageType<storage_type>;
+};
+
+template <DataType storage_type, DataType expressed_type>
+struct TestParam<storage_type, expressed_type> {
   static constexpr DataType kStorage = storage_type;
   static constexpr DataType kExpressed = expressed_type;
   using StorageT = StorageType<storage_type>;
@@ -115,10 +137,12 @@ constexpr const char* ToString(DataType t) {
 template <class T>
 struct ParamName;
 
-template <DataType S, DataType E>
-struct ParamName<TestParam<S, E>> {
+template <DataType T, DataType... Ts>
+struct ParamName<TestParam<T, Ts...>> {
   static std::string Get() {
-    return std::string("TypeParam<") + ToString(S) + ", " + ToString(E) + ">";
+    std::string name = std::string("") + ToString(T);
+    ((name += std::string("_") + ToString(Ts)), ...);
+    return name;
   }
 };
 
@@ -139,6 +163,12 @@ using NonQuantizedIntTestTypes =
 using NonQuantizedFloatTestTypes =
     testing::Types<TestParam<DataType::kBF16>, TestParam<DataType::kF16>,
                    TestParam<DataType::kF32>>;
+
+// Use this with TYPED_TEST_SUITE for non quantized integer testing.
+using NonQuantizedBoolIntTestTypes =
+    testing::Types<TestParam<DataType::kI1>, TestParam<DataType::kSI4>,
+                   TestParam<DataType::kSI8>, TestParam<DataType::kSI16>,
+                   TestParam<DataType::kSI32>>;
 
 // Use this with TYPED_TEST_SUITE for non quantized testing.
 using NonQuantizedTestTypes =
