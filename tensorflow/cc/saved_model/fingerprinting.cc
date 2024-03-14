@@ -38,6 +38,7 @@ limitations under the License.
 #include "tensorflow/core/protobuf/saved_model.pb.h"
 #include "tensorflow/core/protobuf/saved_object_graph.pb.h"
 #include "tensorflow/core/util/tensor_bundle/naming.h"
+#include "util/task/status_macros.h"
 // b/291933687, b/291001524
 #if !defined(PLATFORM_WINDOWS) && !defined(__APPLE__)
 #include "tensorflow/cc/saved_model/fingerprinting_utils.h"
@@ -68,6 +69,7 @@ uint64_t HashCheckpointIndexFile(absl::string_view model_dir) {
   if (read_status.ok()) {
     return tensorflow::Fingerprint64(data);
   } else {
+    LOG(WARNING) << "Failed to read checkpoint file: " << read_status;
     return 0;
   }
 }
@@ -209,8 +211,7 @@ absl::StatusOr<FingerprintDef> ReadSavedModelFingerprint(
     absl::string_view export_dir) {
   const std::string fingerprint_pb_path =
       io::JoinPath(export_dir, kFingerprintFilenamePb);
-  absl::Status found_pb = Env::Default()->FileExists(fingerprint_pb_path);
-  if (!found_pb.ok()) return found_pb;
+  RETURN_IF_ERROR(Env::Default()->FileExists(fingerprint_pb_path));
 
   FingerprintDef fingerprint_proto;
   absl::Status result =
