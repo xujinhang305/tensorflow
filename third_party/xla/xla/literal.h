@@ -35,7 +35,9 @@ limitations under the License.
 #include "absl/base/attributes.h"
 #include "absl/base/casts.h"
 #include "absl/base/config.h"
+#include "absl/base/optimization.h"
 #include "absl/functional/function_ref.h"
+#include "absl/hash/hash.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/array.h"
@@ -70,6 +72,9 @@ class LiteralSlice;
 
 // Abstract base class for literals.
 class LiteralBase {
+ protected:
+  class Piece;
+
  public:
   using DynamicSizeType = ShapeUtil::DynamicSizeType;
 
@@ -353,6 +358,31 @@ class LiteralBase {
     return LiteralBase::Hash(std::move(state), value);
   }
 
+ private:
+  template <typename H, typename NativeT>
+  static void RecursiveHashHelper(const Piece& piece, H& state,
+                                  std::vector<int64_t>& multi_index) {
+    if (multi_index.size() == piece.subshape().rank()) {
+      state = H::combine(std::move(state), piece.Get<NativeT>(multi_index));
+      return;
+    }
+    for (int64_t i = 0; i < piece.GetDynamicSize(multi_index.size()); ++i) {
+      multi_index.push_back(i);
+      RecursiveHashHelper<H, NativeT>(piece, state, multi_index);
+      multi_index.pop_back();
+    }
+  }
+  // With C++20, we can use `requires { absl::Hash<NativeT>(); }`.
+  template <typename T>
+  static constexpr bool IsAbslHashable() {
+    const auto is_absl_hashable_helper =
+        [](auto v) -> decltype(absl::Hash<decltype(v)>()) {
+      ABSL_UNREACHABLE();
+    };
+    return std::is_invocable_v<decltype(is_absl_hashable_helper), T>;
+  }
+
+ public:
   template <typename H, bool kIsLayoutSensitive = true,
             int64_t kByteLimit = std::numeric_limits<int64_t>::max()>
   static H Hash(H state, const LiteralBase& literal) {
@@ -366,10 +396,33 @@ class LiteralBase {
           }
 
           CHECK(LayoutUtil::IsDenseArray(subshape));
-          auto data = absl::MakeConstSpan(
-              static_cast<const char*>(literal.untyped_data(index)),
-              std::min(kByteLimit, literal.size_bytes(index)));
-          state = H::combine(std::move(state), data);
+          const auto hash_func = [&](auto primitive_type_constant) {
+            using NativeT =
+                primitive_util::NativeTypeOf<primitive_type_constant>;
+            // If we can hash NativeT, then do so. Otherwise, hash raw buffer
+            // data taking care to avoid invalid parts of 4-bit type data.
+            if constexpr (IsAbslHashable<NativeT>()) {
+              std::vector<int64_t> multi_index;
+              RecursiveHashHelper<H, NativeT>(literal.piece(index), state,
+                                              multi_index);
+            } else {
+              const int64_t num_bytes =
+                  std::min(kByteLimit, literal.size_bytes(index));
+              const char* buffer =
+                  static_cast<const char*>(literal.untyped_data(index));
+              if (primitive_util::Is4BitType(subshape.element_type())) {
+                for (int64_t i = 0; i < num_bytes; ++i) {
+                  state =
+                      H::combine(std::move(state), buffer[i] & uint8_t{0xf});
+                }
+              } else {
+                auto data = absl::MakeConstSpan(buffer, num_bytes);
+                state = H::combine(std::move(state), data);
+              }
+            }
+          };
+          primitive_util::ArrayTypeSwitch<void>(hash_func,
+                                                subshape.element_type());
         });
 
     return std::move(state);
