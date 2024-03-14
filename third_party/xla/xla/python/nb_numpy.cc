@@ -81,17 +81,24 @@ nb_numpy_ndarray::nb_numpy_ndarray(
   m_ptr = array.release().ptr();
 }
 
-/*static*/ nb_numpy_ndarray nb_numpy_ndarray::ensure(nanobind::handle h,
-                                                     int extra_requirements) {
+/*static*/ nb_numpy_ndarray nb_numpy_ndarray::from_any(nanobind::handle h,
+                                                       int extra_requirements) {
   nb::handle out = PyArray_FromAny(
       h.ptr(), /*dtype=*/nullptr, /*min_depth=*/0,
       /*max_depth=*/0,
       /*requirements=*/NPY_ARRAY_ENSUREARRAY | extra_requirements,
       /*context=*/nullptr);
+  return nb::steal<nb_numpy_ndarray>(out);
+}
+
+/*static*/ nb_numpy_ndarray nb_numpy_ndarray::ensure(nanobind::handle h,
+                                                     int extra_requirements) {
+  auto out =
+      nb_numpy_ndarray::from_any(h, NPY_ARRAY_ENSUREARRAY | extra_requirements);
   if (!out) {
     PyErr_Clear();
   }
-  return nb::steal<nb_numpy_ndarray>(out);
+  return out;
 }
 
 nb_dtype nb_numpy_ndarray::dtype() const {

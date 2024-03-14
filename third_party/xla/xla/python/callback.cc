@@ -158,7 +158,14 @@ absl::StatusOr<nb::tuple> CpuCallback::CallInternal(nb::tuple args) {
       }
       continue;
     }
-    nb_numpy_ndarray array = nb_numpy_ndarray::ensure(output);
+    nb_numpy_ndarray array =
+        nb_numpy_ndarray::from_any(output, NPY_ARRAY_ENSUREARRAY);
+    if (PyErr_Occurred()) {
+      std::string error_message = nb::python_error().what();
+      PyErr_Clear();
+      return absl::InternalError(
+          absl::StrFormat("CpuCallback error: %s", error_message));
+    }
     static_assert(sizeof(ssize_t) == sizeof(int64_t),
                   "Expected ssize_t to be of equal size to int64_t");
     absl::Span<int64_t const> dims(

@@ -85,6 +85,8 @@ class nb_numpy_ndarray : public nanobind::object {
   static nb_numpy_ndarray ensure(nanobind::handle h,
                                  int extra_requirements = 0);
 
+  static nb_numpy_ndarray from_any(nanobind::handle h, int extra_requirements);
+
   nb_dtype dtype() const;
   npy_intp ndim() const;
   const npy_intp* shape() const;
