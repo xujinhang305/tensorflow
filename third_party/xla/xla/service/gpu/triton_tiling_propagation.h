@@ -114,6 +114,8 @@ class TensorIterationSpec {
   // Returns nullptr if not found.
   const DimIterationSpec* Find(int dimension) const;
 
+  std::vector<int> GetDimensions() const;
+
   void RemoveEmptyDimensions() {
     absl::erase_if(dim_iteration_specs_,
                    [](const auto& it) { return it.second.empty(); });
@@ -218,6 +220,8 @@ class DimensionOrder {
         other.ToTensorIterationSpec());
   }
 
+  void set_is_dot(bool is_dot) { is_dot_ = is_dot; }
+
  private:
   // Sequence of all fragments of dimensions of tensor's shape
   // in layout minor-to-major (physical) order.
@@ -226,6 +230,8 @@ class DimensionOrder {
   // (fragments can be physically unordered and disconnected within
   // the shape due to reshapes and transposes).
   FragmentOrders dim_fragments_orders_;
+  // Whether the DimensionOrder is computed from a dot.
+  bool is_dot_;
 };
 
 // This represents an invalid dimension index.
