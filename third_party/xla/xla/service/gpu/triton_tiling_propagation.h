@@ -198,6 +198,9 @@ class DimensionOrder {
   using Fragments = std::vector<Fragment>;
   using FragmentOrders = absl::flat_hash_map<int, std::vector<int>>;
 
+  // Only used in testing.
+  static DimensionOrder FromFragments(Fragments fragments);
+
   const Fragments& TensorFragmentsOrder() const {
     return tensor_fragments_order_;
   }

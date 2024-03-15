@@ -60,14 +60,44 @@ const TensorIterationSpec::DimIterationSpec* TensorIterationSpec::Find(
 
 bool TensorIterationSpec::IsPhysicallyEquivalent(
     const TensorIterationSpec& other) const {
-  if (dim_iteration_specs_.size() != other.dim_iteration_specs_.size()) {
+  auto is_trivial_dim = [](const DimIterationSpec& dim_iter_spec) {
+    if (dim_iter_spec.size() != 1) {
+      return false;
+    }
+    return dim_iter_spec[0].count == 1;
+  };
+
+  auto filter_trivial_dims =
+      [&is_trivial_dim](
+          const absl::flat_hash_map<int, DimIterationSpec>& dim_iter_specs) {
+        absl::flat_hash_map<int, DimIterationSpec>
+            non_trivial_dim_iteration_specs;
+        for (const auto& [dim, dim_spec] : dim_iter_specs) {
+          if (!is_trivial_dim(dim_spec)) {
+            non_trivial_dim_iteration_specs[dim] = dim_spec;
+          }
+        }
+        return non_trivial_dim_iteration_specs;
+      };
+
+  // Filter out trivial dims since they don't affect physical representation.
+  const absl::flat_hash_map<int, DimIterationSpec>
+      non_trivial_dim_iteration_specs =
+          filter_trivial_dims(dim_iteration_specs_);
+  const absl::flat_hash_map<int, DimIterationSpec>
+      other_non_trivial_dim_iteration_specs =
+          filter_trivial_dims(other.dim_iteration_specs_);
+
+  if (non_trivial_dim_iteration_specs.size() !=
+      other_non_trivial_dim_iteration_specs.size()) {
     return false;
   }
-  for (const auto& pair : dim_iteration_specs_) {
+
+  for (const auto& pair : non_trivial_dim_iteration_specs) {
     int dimension = pair.first;
     const DimIterationSpec& dim_iter_spec = pair.second;
-    auto other_it = other.dim_iteration_specs_.find(dimension);
-    if (other_it == other.dim_iteration_specs_.end()) {
+    auto other_it = other_non_trivial_dim_iteration_specs.find(dimension);
+    if (other_it == other_non_trivial_dim_iteration_specs.end()) {
       return false;
     }
     const DimIterationSpec& other_dim_iter_spec = other_it->second;
@@ -146,6 +176,17 @@ using FragmentOrders = DimensionOrder::FragmentOrders;
         dim_order.tensor_fragments_order_.size());
     dim_order.tensor_fragments_order_.push_back(
         Fragment{kSoftmaxBatchDimension, hlo.shape().dimensions_minor(i)});
+  }
+  return dim_order;
+}
+
+/*static*/ DimensionOrder DimensionOrder::FromFragments(Fragments fragments) {
+  DimensionOrder dim_order;
+  for (int i = 0; i < fragments.size(); ++i) {
+    const Fragment& fragment = fragments[i];
+    dim_order.tensor_fragments_order_.push_back(fragments[i]);
+    dim_order.dim_fragments_orders_[fragment.dst_dim_number()].push_back(
+        dim_order.tensor_fragments_order_.size());
   }
   return dim_order;
 }
