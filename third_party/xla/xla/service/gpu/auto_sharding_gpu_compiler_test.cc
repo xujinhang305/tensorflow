@@ -30,6 +30,8 @@ namespace {
 
 namespace m = ::xla::match;
 
+using ::testing::Conditional;
+
 class AutoShardingTest : public HloTestBase {
  protected:
   const char* const dot_hlo_string_ = R"(
@@ -60,14 +62,35 @@ ENTRY matmul {
 };
 
 TEST_F(AutoShardingTest, MatMulWithAutosharding) {
-  auto compiled_module = CompileMatMul(true, 4);
-  auto* instruction =
+  std::unique_ptr<HloModule> compiled_module = CompileMatMul(true, 4);
+  const HloInstruction* parameter1 =
       compiled_module->entry_computation()->parameter_instruction(0);
-  VLOG(2) << instruction->ToString();
+  const HloInstruction* parameter2 =
+      compiled_module->entry_computation()->parameter_instruction(1);
+  bool is_parameter1_replicated = ShapeUtil::Equal(
+      parameter1->shape(), ShapeUtil::MakeShape(PrimitiveType::F32, {32, 64}));
+  bool is_parameter2_replicated = ShapeUtil::Equal(
+      parameter2->shape(), ShapeUtil::MakeShape(PrimitiveType::F32, {64, 128}));
+
+  // Check that at least one of the parameters is sharded, thereby telling us
+  // that the dot is as well.
+  VLOG(2) << parameter1->ToString();
   EXPECT_THAT(
-      instruction,
-      AnyOf(GmockMatch(m::Op().WithSharding("{devices=[1,4]0,1,2,3}")),
-            GmockMatch(m::Op().WithSharding("{devices=[4,1]0,1,2,3}"))));
+      parameter1,
+      Conditional(
+          is_parameter2_replicated,
+          AnyOf(GmockMatch(m::Op().WithShape(PrimitiveType::F32, {8, 64})),
+                GmockMatch(m::Op().WithShape(PrimitiveType::F32, {32, 16}))),
+          GmockMatch(m::Op().WithShape(PrimitiveType::F32, {32, 64}))));
+
+  VLOG(2) << parameter2->ToString();
+  EXPECT_THAT(
+      parameter2,
+      Conditional(
+          is_parameter1_replicated,
+          AnyOf(GmockMatch(m::Op().WithShape(PrimitiveType::F32, {16, 128})),
+                GmockMatch(m::Op().WithShape(PrimitiveType::F32, {64, 32}))),
+          GmockMatch(m::Op().WithShape(PrimitiveType::F32, {64, 128}))));
 }
 
 TEST_F(AutoShardingTest, MatMulWithoutAutosharding) {
