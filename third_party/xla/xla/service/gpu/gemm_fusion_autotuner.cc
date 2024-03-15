@@ -188,6 +188,7 @@ class GemmFusionAutotunerVisitor : public DfsHloRewriteVisitor {
 // This contains all alternative Triton GEMM configs related to one fusion.
 struct GemmConfigSet {
   std::vector<TritonGemmConfig> configs;
+  bool allow_cublas;
 };
 
 using CuDnnPlanId = int64_t;
@@ -259,10 +260,12 @@ class GemmConfigSetCollector : public ConstDfsHloVisitorWithDefault {
         fusion->GetModule()->config().debug_options();
     auto cuda_comp =
         std::get<se::CudaComputeCapability>(config_.GetGpuComputeCapability());
-    return {GetPossibleMatmulAutotuneConfigs(
-        *Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
-            *fusion->called_computations().at(0), HloOpcode::kDot)),
-        cuda_comp, debug_options, config_.ExhaustiveTilingSearch())};
+    const HloDotInstruction* dot_instr =
+        Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
+            *fusion->called_computations().at(0), HloOpcode::kDot));
+    auto configs = GetPossibleMatmulAutotuneConfigs(
+        *dot_instr, cuda_comp, debug_options, config_.ExhaustiveTilingSearch());
+    return {configs, /*allow_cublas=*/!dot_instr->sparse_operands()};
   }
 
   AutotuneConfig config_;
@@ -294,8 +297,11 @@ TileSizeLimit GetUpperLimit(const HloDotInstruction& dot) {
       std::max<int64_t>(tsl::NextPowerOfTwoS64(m), kMinTileSize);
   const int64_t block_n_limit =
       std::max<int64_t>(tsl::NextPowerOfTwoS64(n), kMinTileSize);
+  // Increase minimum tile size for the contracting dimension proportionally
+  // to the sparsity multiplier (assume 2:4 structured sparsity).
   const int64_t block_k_limit =
-      std::max<int64_t>(tsl::NextPowerOfTwoS64(k), kMinTileSize);
+      std::max<int64_t>(tsl::NextPowerOfTwoS64(k),
+                        kMinTileSize * (dot.sparse_operands() ? 2 : 1));
   return {block_m_limit, block_n_limit, block_k_limit};
 }
 
@@ -343,6 +349,12 @@ std::vector<TritonGemmConfig> GetExhaustiveMatmulAutotuneConfigs(
           }
           for (int block_k : BLOCK_SIZES) {
             if (block_k > limit.block_k) {
+              continue;
+            }
+            // Sparse meta should have at least one element per thread.
+            // Note: only 2:4 structured sparsity is currently supported.
+            if (dot.sparse_operands() &&
+                block_m * block_k / 16 < num_warps * WarpSize()) {
               continue;
             }
             for (int split_k : SPLIT_K) {
@@ -429,6 +441,13 @@ std::vector<TritonGemmConfig> ReduceTileSizes(
     config.block_k = std::min<int64_t>(config.block_k, limit.block_k);
     config.split_k = std::min<int64_t>(
         config.split_k, GetSplitKLimit(config.block_k, limit.block_k));
+    // Sparse meta should have at least one element per thread.
+    // Note: only 2:4 structured sparsity is currently supported.
+    if (dot.sparse_operands()) {
+      int meta_elements = config.block_m * config.block_k / 16;
+      config.num_warps =
+          std::min<int64_t>(config.num_warps, meta_elements / WarpSize());
+    }
   }
 
   // Remove duplicates.
@@ -757,10 +776,12 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
       }
 
       thread_pool->Schedule([&, fusion] {
-        absl::StatusOr<bool> has_executable =
-            compile_reference_executable(fusion);
-        TF_CHECK_OK(has_executable.status());
-        log(has_executable.value());
+        if (gemm_config_set.allow_cublas) {
+          absl::StatusOr<bool> has_executable =
+              compile_reference_executable(fusion);
+          TF_CHECK_OK(has_executable.status());
+          log(has_executable.value());
+        }
         counter.DecrementCount();
       });
 
@@ -803,9 +824,11 @@ CompileMany(const AutotuneConfig& config, AutotunerCompileUtil& util,
         log(has_executable);
       }
 
-      TF_ASSIGN_OR_RETURN(bool has_executable,
-                          compile_reference_executable(fusion));
-      log(has_executable);
+      if (gemm_config_set.allow_cublas) {
+        TF_ASSIGN_OR_RETURN(bool has_executable,
+                            compile_reference_executable(fusion));
+        log(has_executable);
+      }
 
       if (IsFusionKind(*fusion, kCuDnnFusionKind) ||
           (IsFusionKind(*fusion, kTritonGemmFusionKind) &&
@@ -864,11 +887,10 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     input_shapes.push_back(param->shape());
   }
 
-  // Run with cuBLAS.
+  // Run with cuBLAS (optional).
   std::optional<ScopedShapedBuffer> reference_buffer;
-  absl::Duration cublas_duration;
-  {
-    TF_RET_CHECK(executable_set.reference != nullptr);
+  absl::Duration cublas_duration = absl::InfiniteDuration();
+  if (executable_set.reference != nullptr) {
     TF_ASSIGN_OR_RETURN(std::optional<ProfilingOutput> output,
                         util.ProfileExecutable(&*executable_set.reference,
                                                stream, inputs, input_shapes));
@@ -925,7 +947,9 @@ absl::StatusOr<AutotuneResult> Execute(const AutotuneConfig& config,
     *res.mutable_run_time() =
         tsl::proto_utils::ToDurationProto(profiling_output->duration);
 
-    if (config.should_check_correctness()) {
+    // Reference buffer is available when `config.should_check_correctness()`
+    // is set and reference executable was compiled.
+    if (reference_buffer.has_value()) {
       TF_ASSIGN_OR_RETURN(
           se::RedzoneAllocator::RedzoneCheckStatus rz_check_status,
           rz_allocator.CheckRedzones());
@@ -1157,7 +1181,11 @@ absl::StatusOr<bool> GemmFusionAutotuner::Run(
       if (IsFusionKind(*fusion, kCuDnnFusionKind)) {
         res.mutable_algorithm()->set_algo_id(-1);
       } else {
-        *res.mutable_triton() = kDefaultGemmTiling.ToProto();
+        const HloDotInstruction* dot_instr =
+            Cast<HloDotInstruction>(hlo_query::GetFirstInstructionWithOpcode(
+                *fusion->called_computations().at(0), HloOpcode::kDot));
+        auto config = ReduceTileSizes(*dot_instr, {kDefaultGemmTiling}).front();
+        *res.mutable_triton() = config.ToProto();
       }
       *res.mutable_run_time() =
           tsl::proto_utils::ToDurationProto(absl::ZeroDuration());
