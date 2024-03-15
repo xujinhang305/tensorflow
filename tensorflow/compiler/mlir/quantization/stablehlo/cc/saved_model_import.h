@@ -19,12 +19,16 @@ limitations under the License.
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
+#include "absl/base/attributes.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "mlir/IR/BuiltinOps.h"  // from @llvm-project
+#include "mlir/IR/MLIRContext.h"  // from @llvm-project
 #include "tensorflow/compiler/mlir/quantization/stablehlo/cc/types.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/quantization_config.pb.h"
 
 namespace mlir::quant::stablehlo {
 
@@ -43,6 +47,18 @@ GetFunctionAliases(absl::string_view saved_model_path,
 void UpdateFunctionAliases(
     absl::flat_hash_map<FunctionName, FunctionAlias>& function_aliases,
     ModuleOp module_op);
+
+// Loads a SavedModel to `mlir::ModuleOp` and performs preprocesses including
+// shape inference and graph freezing.
+// TODO: b/329206105 - Add unit tests after decomposing preprocessing passes.
+absl::StatusOr<ModuleOp> ImportSavedModel(
+    absl::string_view saved_model_path,
+    const std::vector<std::string>& signature_keys,
+    const std::unordered_set<std::string>& tags,
+    const ::stablehlo::quantization::QuantizationConfig& quantization_config,
+    absl::string_view mlir_dump_file_prefix,
+    absl::flat_hash_map<FunctionName, FunctionAlias>& function_aliases,
+    MLIRContext& ctx ABSL_ATTRIBUTE_LIFETIME_BOUND);
 
 }  // namespace mlir::quant::stablehlo
 
