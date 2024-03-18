@@ -151,7 +151,7 @@ void RegisterBitcastOpKernel() {
 #if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
   {
     auto* builder = TF_NewKernelBuilder("Bitcast", tensorflow::DEVICE_GPU,
-                                        &BitcastOp_Create, &BitcastOp_Compute,
+                                        &BitcastOp_Create, &BitcastOp_Compute，
                                         &BitcastOp_Delete);
     TF_RegisterKernelBuilder("BitcastOp", builder, status);
     CHECK_EQ(TF_OK, TF_GetCode(status))
